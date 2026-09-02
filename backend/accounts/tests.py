@@ -103,7 +103,7 @@ class PermissionEnforcementTests(APITestCase):
 
 class UserManagementTests(APITestCase):
     def setUp(self):
-        self.admin_role = make_role("Owner/Admin", ["MANAGE_USERS", "VIEW_AUDIT_LOG"])
+        self.admin_role = make_role("Owner/Admin", ["MANAGE_USERS", "MANAGE_ROLES", "VIEW_AUDIT_LOG"])
         self.staff_role = make_role("Staff", ["VIEW_CUSTOMER"])
         self.admin = User.objects.create_user(username="admin1", password="StrongPass123!", role=self.admin_role)
         login = self.client.post("/api/auth/login/", {"username": "admin1", "password": "StrongPass123!"})
@@ -139,6 +139,28 @@ class UserManagementTests(APITestCase):
         second_admin = User.objects.create_user(username="admin2", password="x", role=self.admin_role)
         res = self.client.delete(f"/api/users/{self.admin.id}/", **self._auth())
         self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_cannot_demote_last_admin(self):
+        res = self.client.patch(
+            f"/api/users/{self.admin.id}/",
+            {"role": self.staff_role.id},
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.role_id, self.admin_role.id)
+
+    def test_system_role_flag_cannot_be_changed(self):
+        res = self.client.patch(
+            f"/api/roles/{self.admin_role.id}/",
+            {"is_system_role": False},
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.admin_role.refresh_from_db()
+        self.assertTrue(self.admin_role.is_system_role)
 
     def test_reactivate_user(self):
         target = User.objects.create_user(username="target", password="x", role=self.staff_role, is_active=False, is_active_employee=False)

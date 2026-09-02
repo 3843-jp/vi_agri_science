@@ -14,7 +14,11 @@ from .serializers import (
     PermissionSerializer, CustomTokenObtainPairSerializer,
 )
 from .permissions import HasPermissionCode, IsOwnerOrAdmin
-from .safety import would_leave_no_admin_if_user_removed, would_leave_no_admin_if_role_loses_manage_users
+from .safety import (
+    active_user_ids_with_manage_users,
+    would_leave_no_admin_if_user_removed,
+    would_leave_no_admin_if_role_loses_manage_users,
+)
 
 
 class LoginView(TokenObtainPairView):
@@ -64,6 +68,19 @@ class UserViewSet(viewsets.ModelViewSet):
         log_action("CREATE_USER", "User", instance.id, new_value=UserSerializer(instance).data, user=self.request.user)
 
     def perform_update(self, serializer):
+        instance = serializer.instance
+        candidate_role = serializer.validated_data.get("role", instance.role)
+        candidate_employee = serializer.validated_data.get("is_active_employee", instance.is_active_employee)
+        currently_manages_users = instance.is_active and instance.is_active_employee and instance.has_perm_code("MANAGE_USERS")
+        will_manage_users = instance.is_active and candidate_employee and (
+            instance.is_superuser or bool(candidate_role and candidate_role.permissions.filter(codename="MANAGE_USERS").exists())
+        )
+        if currently_manages_users and not will_manage_users and len(active_user_ids_with_manage_users(exclude_user_id=instance.id)) == 0:
+            from rest_framework.exceptions import ValidationError
+
+            raise ValidationError(
+                {"role": "Cannot remove MANAGE_USERS from the last active account able to manage users."}
+            )
         old = UserSerializer(serializer.instance).data
         instance = serializer.save()
         log_action("UPDATE_USER", "User", instance.id, old_value=old, new_value=UserSerializer(instance).data, user=self.request.user)

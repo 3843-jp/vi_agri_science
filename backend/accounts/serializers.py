@@ -19,6 +19,7 @@ class RoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Role
         fields = ["id", "name", "description", "is_system_role", "permissions", "permission_codes"]
+        read_only_fields = ["is_system_role"]
 
     def create(self, validated_data):
         codes = validated_data.pop("permission_codes", [])
