@@ -5,7 +5,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework_simplejwt.views import TokenObtainPairView
+from django.conf import settings
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from audit.utils import log_action
 from .models import User, Role, Permission
@@ -21,6 +26,28 @@ from .safety import (
 )
 
 
+def _set_refresh_cookie(response, token):
+    response.set_cookie(
+        settings.JWT_REFRESH_COOKIE_NAME,
+        token,
+        max_age=int(settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"].total_seconds()),
+        httponly=True,
+        secure=settings.JWT_REFRESH_COOKIE_SECURE,
+        samesite=settings.JWT_REFRESH_COOKIE_SAMESITE,
+        path="/api/auth/",
+    )
+
+
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CsrfTokenView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response({"detail": "CSRF cookie set."})
+
+
+@method_decorator(csrf_protect, name="dispatch")
 class LoginView(TokenObtainPairView):
     """POST /api/auth/login/ — returns access + refresh tokens plus user/role/permissions.
     Inactive users are rejected here automatically: SimpleJWT's serializer
@@ -28,6 +55,48 @@ class LoginView(TokenObtainPairView):
     is_active=False before a token is ever issued — no separate check
     needed, verified in accounts/tests.py."""
     serializer_class = CustomTokenObtainPairSerializer
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            refresh = response.data.pop("refresh")
+            _set_refresh_cookie(response, refresh)
+        return response
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class RefreshView(TokenRefreshView):
+    def post(self, request, *args, **kwargs):
+        refresh = request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME)
+        if not refresh:
+            return Response({"detail": "Authentication credentials were not provided."}, status=401)
+        serializer = self.get_serializer(data={"refresh": refresh})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError:
+            return Response({"detail": "Token is invalid or blacklisted."}, status=401)
+        response = Response(serializer.validated_data)
+        rotated_refresh = response.data.pop("refresh", None)
+        if rotated_refresh:
+            _set_refresh_cookie(response, rotated_refresh)
+        return response
+
+
+@method_decorator(csrf_protect, name="dispatch")
+class LogoutView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        refresh = request.COOKIES.get(settings.JWT_REFRESH_COOKIE_NAME)
+        if refresh:
+            try:
+                RefreshToken(refresh).blacklist()
+            except TokenError:
+                pass
+        response = Response({"detail": "Logged out."})
+        response.delete_cookie(settings.JWT_REFRESH_COOKIE_NAME, path="/api/auth/")
+        return response
 
 
 class MeView(APIView):

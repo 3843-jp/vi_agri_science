@@ -35,6 +35,5 @@ export interface User {
 // Response shape of POST /api/auth/login/ (CustomTokenObtainPairSerializer)
 export interface LoginResponse {
   access: string
-  refresh: string
   user: User
 }

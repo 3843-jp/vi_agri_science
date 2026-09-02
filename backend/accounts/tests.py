@@ -5,8 +5,9 @@ directly (never through a mocked permission check) — the same rule the
 rest of this project follows: the backend is the real security boundary,
 so that's what gets tested.
 """
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 from rest_framework import status
+from django.test import override_settings
 from .models import User, Role, Permission
 
 
@@ -29,7 +30,9 @@ class AuthenticationTests(APITestCase):
         res = self.client.post("/api/auth/login/", {"username": "bob", "password": "StrongPass123!"})
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertIn("access", res.data)
-        self.assertIn("refresh", res.data)
+        self.assertNotIn("refresh", res.data)
+        self.assertIn("via_refresh", res.cookies)
+        self.assertTrue(res.cookies["via_refresh"]["httponly"])
         self.assertEqual(res.data["user"]["username"], "bob")
 
     def test_login_wrong_password(self):
@@ -49,13 +52,42 @@ class AuthenticationTests(APITestCase):
         wasn't installed, so rotated refresh tokens never actually got
         invalidated. Fixed; this test guards against it silently breaking again."""
         login = self.client.post("/api/auth/login/", {"username": "bob", "password": "StrongPass123!"})
-        old_refresh = login.data["refresh"]
+        old_refresh = login.cookies["via_refresh"].value
 
-        first = self.client.post("/api/auth/refresh/", {"refresh": old_refresh})
+        first = self.client.post("/api/auth/refresh/")
         self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertNotIn("refresh", first.data)
 
-        reuse = self.client.post("/api/auth/refresh/", {"refresh": old_refresh})
+        self.client.cookies["via_refresh"] = old_refresh
+        reuse = self.client.post("/api/auth/refresh/")
         self.assertEqual(reuse.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_secure_refresh_cookie_follows_configuration(self):
+        with override_settings(JWT_REFRESH_COOKIE_SECURE=True):
+            res = self.client.post("/api/auth/login/", {"username": "bob", "password": "StrongPass123!"})
+        self.assertTrue(res.cookies["via_refresh"]["secure"])
+
+    def test_logout_blacklists_refresh_token(self):
+        login = self.client.post("/api/auth/login/", {"username": "bob", "password": "StrongPass123!"})
+        refresh = login.cookies["via_refresh"].value
+        logout = self.client.post("/api/auth/logout/")
+        self.assertEqual(logout.status_code, status.HTTP_200_OK)
+        self.client.cookies["via_refresh"] = refresh
+        reuse = self.client.post("/api/auth/refresh/")
+        self.assertEqual(reuse.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_login_requires_csrf_token(self):
+        client = APIClient(enforce_csrf_checks=True)
+        client.get("/api/auth/csrf/")
+        blocked = client.post("/api/auth/login/", {"username": "bob", "password": "StrongPass123!"})
+        self.assertEqual(blocked.status_code, status.HTTP_403_FORBIDDEN)
+        csrf = client.cookies["csrftoken"].value
+        allowed = client.post(
+            "/api/auth/login/",
+            {"username": "bob", "password": "StrongPass123!"},
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(allowed.status_code, status.HTTP_200_OK)
 
 
 class PermissionEnforcementTests(APITestCase):

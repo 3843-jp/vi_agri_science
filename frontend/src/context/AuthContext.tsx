@@ -8,7 +8,7 @@ interface AuthContextValue {
   isLoading: boolean
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<void>
-  logout: () => void
+  logout: () => Promise<void>
   hasPermission: (code: string) => boolean
 }
 
@@ -19,7 +19,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    await authApi.logout().catch(() => undefined)
     tokenStore.clear()
     setUser(null)
   }, [])
@@ -28,13 +29,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // current user's profile+permissions from /api/auth/me/ rather than
   // trusting anything cached — permissions could have changed server-side.
   useEffect(() => {
-    const existingToken = tokenStore.getAccess() ?? localStorage.getItem('via_access_token')
-    if (!existingToken) {
-      setIsLoading(false)
-      return
-    }
-    authApi
-      .me()
+    authApi.csrf()
+      .then(() => tokenStore.getAccess() ? null : authApi.refresh())
+      .then((data) => {
+        if (data?.access) tokenStore.setAccess(data.access)
+        return authApi.me()
+      })
       .then(setUser)
       .catch(() => tokenStore.clear())
       .finally(() => setIsLoading(false))
@@ -51,7 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (username: string, password: string) => {
     const data = await authApi.login(username, password)
-    tokenStore.setTokens(data.access, data.refresh)
+    tokenStore.setAccess(data.access)
     setUser(data.user)
   }, [])
 

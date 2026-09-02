@@ -78,10 +78,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Adds role/permission info directly into the token response so the
-    frontend can render the correct UI immediately after login without a
-    second round trip — while the backend still re-checks permissions on
-    every subsequent request."""
+    """Adds role/permission info while refresh tokens are issued as cookies."""
 
     def validate(self, attrs):
         data = super().validate(attrs)

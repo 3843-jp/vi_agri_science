@@ -149,6 +149,7 @@ CSRF_COOKIE_SECURE = config(
     default=False,
     cast=bool,
 )
+CSRF_COOKIE_SAMESITE = config("CSRF_COOKIE_SAMESITE", default="Lax")
 
 SECURE_HSTS_SECONDS = config(
     "SECURE_HSTS_SECONDS",
@@ -215,6 +216,15 @@ CORS_ALLOWED_ORIGINS = config(
     default="http://localhost:5173,http://127.0.0.1:5173",
     cast=Csv(),
 )
+CORS_ALLOW_CREDENTIALS = True
+
+JWT_REFRESH_COOKIE_NAME = config("JWT_REFRESH_COOKIE_NAME", default="via_refresh")
+JWT_REFRESH_COOKIE_SECURE = config(
+    "JWT_REFRESH_COOKIE_SECURE",
+    default=SECURE_SSL_REDIRECT,
+    cast=bool,
+)
+JWT_REFRESH_COOKIE_SAMESITE = config("JWT_REFRESH_COOKIE_SAMESITE", default="Lax")
 
 # ---------------------------------------------------------------------------
 # Business identity — configurable, not hard-coded into templates/components.

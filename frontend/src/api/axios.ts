@@ -10,8 +10,14 @@ import type { ApiErrorShape } from '../types'
  */
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
+function getCookie(name: string): string | null {
+  const cookie = document.cookie.split('; ').find((row) => row.startsWith(`${name}=`))
+  return cookie ? decodeURIComponent(cookie.split('=')[1]) : null
+}
+
 export const api = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -19,6 +25,10 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = tokenStore.getAccess()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  if (config.method && !['get', 'head', 'options'].includes(config.method.toLowerCase())) {
+    const csrf = getCookie('csrftoken')
+    if (csrf) config.headers['X-CSRFToken'] = csrf
   }
   return config
 })
@@ -56,12 +66,13 @@ export function extractErrorMessage(err: unknown): string {
 let refreshPromise: Promise<string | null> | null = null
 
 async function refreshAccessToken(): Promise<string | null> {
-  const refresh = tokenStore.getRefresh()
-  if (!refresh) return null
   try {
-    const res = await axios.post(`${API_BASE_URL}/auth/refresh/`, { refresh })
+    const res = await axios.post(`${API_BASE_URL}/auth/refresh/`, undefined, {
+      withCredentials: true,
+      headers: { 'X-CSRFToken': getCookie('csrftoken') ?? '' },
+    })
     const newAccess = res.data.access as string
-    tokenStore.setTokens(newAccess)
+    tokenStore.setAccess(newAccess)
     return newAccess
   } catch {
     return null
