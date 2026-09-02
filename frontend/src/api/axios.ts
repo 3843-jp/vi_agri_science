@@ -2,10 +2,16 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { tokenStore } from './tokenStore'
 import type { ApiErrorShape } from '../types'
 
-// In dev, Vite's proxy (vite.config.ts) forwards /api to Django on :8000.
-// In production this should be set to the deployed API origin.
+/**
+ * API base URL from environment variable.
+ * Development (Vite proxy): /api
+ * Production: https://your-backend-domain.com/api
+ * Falls back to /api if not set.
+ */
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+
 export const api = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -53,7 +59,7 @@ async function refreshAccessToken(): Promise<string | null> {
   const refresh = tokenStore.getRefresh()
   if (!refresh) return null
   try {
-    const res = await axios.post('/api/auth/refresh/', { refresh })
+    const res = await axios.post(`${API_BASE_URL}/auth/refresh/`, { refresh })
     const newAccess = res.data.access as string
     tokenStore.setTokens(newAccess)
     return newAccess
