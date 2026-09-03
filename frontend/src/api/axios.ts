@@ -2,23 +2,10 @@ import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { tokenStore } from './tokenStore'
 import type { ApiErrorShape } from '../types'
 
-/**
- * API base URL from environment variable.
- * Development (Vite proxy): /api
- * Production: https://your-backend-domain.com/api
- * Falls back to /api if not set.
- */
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
-function getCookie(name: string): string | null {
-  const cookie = document.cookie
-    .split('; ')
-    .find((row) => row.startsWith(`${name}=`))
-
-  return cookie
-    ? decodeURIComponent(cookie.split('=')[1])
-    : null
-}
+// Store CSRF token in memory
+let csrfToken: string | null = null
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
@@ -28,23 +15,42 @@ export const api = axios.create({
   },
 })
 
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+/**
+ * Fetch CSRF token from the backend.
+ * Backend endpoint:
+ * GET /api/auth/csrf/
+ */
+async function fetchCsrfToken(): Promise<string | null> {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/auth/csrf/`, {
+      withCredentials: true,
+    })
+
+    csrfToken = response.data.csrfToken
+    return csrfToken
+  } catch {
+    return null
+  }
+}
+
+api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   const token = tokenStore.getAccess()
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
 
-  // Add CSRF token for unsafe requests when available.
-  // This works locally when the cookie is readable.
-  if (
-    config.method &&
-    !['get', 'head', 'options'].includes(config.method.toLowerCase())
-  ) {
-    const csrf = getCookie('csrftoken')
+  const method = config.method?.toLowerCase()
 
-    if (csrf) {
-      config.headers['X-CSRFToken'] = csrf
+  // Add CSRF token for unsafe requests
+  if (method && !['get', 'head', 'options'].includes(method)) {
+    // Get CSRF token if we don't have one
+    if (!csrfToken) {
+      await fetchCsrfToken()
+    }
+
+    if (csrfToken) {
+      config.headers['X-CSRFToken'] = csrfToken
     }
   }
 
@@ -52,7 +58,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 })
 
 /**
- * Normalized, always-a-string error message safe to show in the UI.
+ * Normalized error messages safe for UI.
  */
 export function extractErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
@@ -87,8 +93,6 @@ export function extractErrorMessage(err: unknown): string {
         return data.detail.join(' ')
       }
 
-      // Field-error object, e.g.:
-      // { "items_input": ["..."] }
       const firstKey = Object.keys(data.detail)[0]
       const firstVal = data.detail[firstKey]
 
@@ -103,37 +107,33 @@ export function extractErrorMessage(err: unknown): string {
   return 'Something went wrong. Please try again.'
 }
 
-// --- Refresh-on-401 handling -------------------------------------------
+// --------------------------------------------------
+// Refresh-on-401 handling
+// --------------------------------------------------
 
 let refreshPromise: Promise<string | null> | null = null
 
 async function refreshAccessToken(): Promise<string | null> {
   try {
-    // Get the CSRF token directly from the backend.
-    // Do NOT rely on document.cookie because the backend is on
-    // a different domain in production.
-    const csrfResponse = await axios.get(
-      `${API_BASE_URL}/auth/csrf/`,
-      {
-        withCredentials: true,
-      }
-    )
+    // Ensure we have a CSRF token before POSTing
+    if (!csrfToken) {
+      await fetchCsrfToken()
+    }
 
-    const csrfToken = csrfResponse.data.csrfToken as string
-
-    // Send refresh cookie automatically and CSRF token explicitly.
-    const res = await axios.post(
+    const response = await axios.post(
       `${API_BASE_URL}/auth/refresh/`,
       undefined,
       {
         withCredentials: true,
-        headers: {
-          'X-CSRFToken': csrfToken,
-        },
-      }
+        headers: csrfToken
+          ? {
+              'X-CSRFToken': csrfToken,
+            }
+          : {},
+      },
     )
 
-    const newAccess = res.data.access as string
+    const newAccess = response.data.access as string
 
     tokenStore.setAccess(newAccess)
 
@@ -163,7 +163,6 @@ api.interceptors.response.use(
     ) {
       originalRequest._retried = true
 
-      // Only one refresh request should run at a time.
       if (!refreshPromise) {
         refreshPromise = refreshAccessToken().finally(() => {
           refreshPromise = null
@@ -179,14 +178,10 @@ api.interceptors.response.use(
         return api(originalRequest)
       }
 
-      // Refresh failed — clear tokens and force re-login.
       tokenStore.clear()
-
-      window.dispatchEvent(
-        new CustomEvent('auth:logout')
-      )
+      window.dispatchEvent(new CustomEvent('auth:logout'))
     }
 
     return Promise.reject(error)
-  }
+  },
 )
