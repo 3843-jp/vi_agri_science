@@ -8,6 +8,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.middleware.csrf import get_token
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
@@ -44,8 +45,9 @@ class CsrfTokenView(APIView):
     permission_classes = []
 
     def get(self, request):
-        return Response({"detail": "CSRF cookie set."})
-
+        return Response({
+            "csrfToken": get_token(request)
+        })
 
 @method_decorator(csrf_protect, name="dispatch")
 class LoginView(TokenObtainPairView):
