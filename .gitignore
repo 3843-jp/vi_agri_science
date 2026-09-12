@@ -1,0 +1,16 @@
+
+# Frontend generated files
+frontend/node_modules/
+frontend/dist/
+
+# Python generated files
+__pycache__/
+*.pyc
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.sqlite3
